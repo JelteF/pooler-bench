@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sudo cat > /etc/apt/preferences.d/dotnet.conf <<EOF
+sudo tee /etc/apt/preferences.d/dotnet.conf > /dev/null <<EOF
 Package: dotnet* aspnet* netstandard*
 Pin: origin "archive.ubuntu.com"
 Pin-Priority: -10
