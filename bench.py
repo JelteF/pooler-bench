@@ -6,6 +6,7 @@ import sys
 import shlex
 
 import click
+import requests
 
 
 def eprint(*args, **kwargs):
@@ -118,9 +119,41 @@ PORTS = {
     "odyssey": 5002,
     "pgcat": 5003,
     "supavisor": 5004,
+    "supavisor_session": 5005,
 }
 
 POSTGRES_PORT = 9700
+
+
+def setup_supavisor():
+    requests.put(
+        "http://localhost:4000/api/tenants/dev_tenant",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQ1MTkyODI0LCJleHAiOjE5NjA3Njg4MjR9.M9jrxyvPLkUxWgOYSf5dNdJ8v_eRrq810ShFRT8N-6M",
+        },
+        json={
+            "tenant": {
+                "db_host": "localhost",
+                "db_port": 9700,
+                "db_database": "postgres",
+                "ip_version": "auto",
+                "enforce_ssl": False,
+                "require_user": False,
+                "auth_query": "SELECT rolname, rolpassword FROM pg_authid WHERE rolname=$1;",
+                "users": [
+                    {
+                        "db_user": "postgres",
+                        "db_password": "test",
+                        "pool_size": 20,
+                        "mode_type": "transaction",
+                        "is_manager": True,
+                    }
+                ],
+            }
+        },
+    )
 
 
 @cli.command()
@@ -138,7 +171,11 @@ POSTGRES_PORT = 9700
 @click.option("--postgres-latency", is_flag=True)
 @click.option("--pooler-latency", is_flag=True)
 @click.option("--latency", type=int, default=1)
-@click.option("--bench", default="pipeline", type=click.Choice(["pipeline", "large", "select-only", "tcpb"]))
+@click.option(
+    "--bench",
+    default="pipeline",
+    type=click.Choice(["pipeline", "large", "select-only", "tcpb"]),
+)
 @click.option("--large-size", type=int, default=10000)
 def bench(
     pooler,
@@ -159,14 +196,19 @@ def bench(
     if pooler_latency:
         latency_ports.append(PORTS[pooler])
     large_string = "a" * large_size
-    stdin = ''
+    stdin = ""
     args = []
     if bench == "large":
-        stdin = f"select '{large_size}'";
+        stdin = f"select '{large_string}'"
     elif bench == "select-only":
         args = ["--select-only"]
     elif bench != "tcpb":
         args = [f"--file={bench}.sql"]
+
+    username = "postgres"
+    if pooler == "supavisor":
+        setup_supavisor()
+        username = f"{username}.dev_tenant"
 
     with add_latency(latency_ports, latency):
         run(
@@ -174,16 +216,12 @@ def bench(
                 "pgbench",
                 "--port",
                 PORTS[pooler],
-                "--username=postgres",
+                f"--username={username}",
                 "--progress=1",
-                "--time",
-                time,
-                "--client",
-                client,
-                "--jobs",
-                jobs,
-                "--protocol",
-                protocol,
+                f"--time={time}",
+                f"--client={client}",
+                f"--jobs={jobs}",
+                f"--protocol={protocol}",
                 *args,
             ],
             input=stdin.encode(),
@@ -200,23 +238,46 @@ def run_pgbouncer(index):
 def run_odyssey():
     run("odyssey/build/sources/odyssey configs/odyssey.conf")
 
+
 @cli_run.command("pgcat")
 def run_pgcat():
     run("pgcat/target/release/pgcat configs/pgcat.toml")
 
+
 @cli_run.command("supavisor")
 def run_supavisor():
-    # run("odyssey/build/sources/odyssey configs/odyssey.conf")
-    ...
+    run(
+        "supavisor/_build/bench/rel/supavisor/bin/supavisor start",
+        env={
+            **os.environ,
+            "MIX_ENV": "prod",
+            "DATABASE_URL": f"ecto://postgres:postgres@localhost:{POSTGRES_PORT}/postgres",
+            "PROXY_PORT_TRANSACTION": "5004",
+            "PROXY_PORT_SESSION": "5005",
+            "SECRET_KEY_BASE": "dev",
+            "API_JWT_SECRET": "dev",
+            "METRICS_JWT_SECRET": "dev",
+            "VAULT_ENC_KEY": "aHD8DZRdk2emnkdktFZRh3E9RNg4aOY7",
+        },
+    )
+
 
 @cli_run.command("postgres")
 def run_postgres():
-    run("tools/citus_dev/citus_dev make test --destroy --size 0 --no-lib --no-extension --init-with setup.sql")
+    run(
+        "tools/citus_dev/citus_dev make test --destroy --size 0 --no-lib --no-extension --init-with setup.sql"
+    )
     run("echo max_connections=1000 >> test/coordinator/postgresql.conf")
     run("tools/citus_dev/citus_dev restart test")
     run("pgbench -i -p 9700")
-
-
+    run(
+        "mix ecto.migrate --prefix _supavisor --log-migrator-sql",
+        cwd="supavisor",
+        env={
+            **os.environ,
+            "DATABASE_URL": f"ecto://postgres:postgres@localhost:{POSTGRES_PORT}/postgres",
+        },
+    )
 
 
 if __name__ == "__main__":

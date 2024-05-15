@@ -2,7 +2,7 @@
 
 set -euxo pipefail
 
-sudo tee /etc/apt/preferences.d/dotnet.conf > /dev/null <<EOF
+sudo tee /etc/apt/preferences.d/dotnet > /dev/null <<EOF
 Package: dotnet* aspnet* netstandard*
 Pin: origin "archive.ubuntu.com"
 Pin-Priority: -10
@@ -25,11 +25,11 @@ sudo dpkg -i packages-microsoft-prod.deb
 # Clean up
 rm packages-microsoft-prod.deb
 
-# Update packages
+sudo add-apt-repository -y ppa:rabbitmq/rabbitmq-erlang
+
 sudo apt-get update
 
-sudo apt-get install -y dotnet-sdk-8.0 openjdk-17-jdk
-
+sudo apt-get install -y dotnet-sdk-8.0 openjdk-17-jdk libevent-dev libssl-dev libc-ares-dev cmake gcc g++ make autoconf automake libtool pkg-config elixir erlang-dev erlang-xmerl erlang-os-mon inotify-tools
 git clone https://github.com/pgbouncer/pgbouncer --recurse-submodules
 git clone https://github.com/supabase/supavisor
 git clone https://github.com/yandex/odyssey
@@ -39,9 +39,6 @@ git clone https://github.com/citusdata/tools
 git clone https://github.com/pgjdbc/pgjdbc
 git clone https://github.com/npgsql/Npgsql
 
-sudo add-apt-repository -y ppa:rabbitmq/rabbitmq-erlang
-sudo apt-get update
-sudo apt-get install -y libevent-dev libssl-dev libc-ares-dev cmake gcc g++ make autoconf automake libtool pkg-config elixir erlang-dev erlang-xmerl
 pip install docopt
 cd pgbouncer
 ./autogen.sh
@@ -59,4 +56,11 @@ cd -
 
 cd pgjdbc
 ./gradlew cleanTest
+cd -
 
+cp configs/supavisor.exs supavisor/config/bench.exs
+cd supavisor
+mix deps.get
+MIX_ENV=bench mix compile
+MIX_ENV=bench mix release supavisor
+cd -
