@@ -166,3 +166,5 @@ cython_debug/
 /tools/
 /pgjdbc/
 /Npgsql/
+/test/
+*_logfile
